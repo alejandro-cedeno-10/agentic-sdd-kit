@@ -1,0 +1,39 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: JSON manifests parse
+        run: |
+          for f in .claude-plugin/marketplace.json \
+                   plugins/sdd-harness/.claude-plugin/plugin.json \
+                   plugins/sdd-harness/hooks/hooks.json \
+                   package.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" && echo "ok  $f"
+          done
+
+      - name: Installer syntax
+        run: node --check bin/install.mjs
+
+      - name: Workflow syntax (wrapped — the harness uses top-level return by design)
+        run: |
+          printf 'async function __wrap(){\n' > /tmp/wf.mjs
+          sed 's/^export const meta/const meta/' plugins/sdd-harness/workflows/sdd-feature-flow.mjs >> /tmp/wf.mjs
+          printf '\n}\n' >> /tmp/wf.mjs
+          node --check /tmp/wf.mjs
+
+      - name: Python hooks compile
+        run: python3 -m py_compile plugins/sdd-harness/hooks/*.py
+
+      - name: Installer dry-run
+        run: node bin/install.mjs --dry-run --yes
