@@ -2,19 +2,21 @@
 /**
  * agentic-sdd-kit installer.
  *
- * Interactive setup for the SDD harness on this machine's Claude Code config:
- *  - registers + enables the dependency plugins you choose (engram, caveman,
- *    chrome-devtools-mcp) and this kit's own sdd-harness plugin,
+ * Interactive, per-step setup on this machine's Claude Code install:
+ *  - actively installs each dependency you choose via the `claude plugin` CLI
+ *    (marketplace add + install): caveman (required), engram, chrome-devtools-mcp,
+ *    and this kit's own sdd-harness plugin,
  *  - installs the sdd-feature-flow workflow into ~/.claude/workflows/,
- *  - turns on the Workflow tool,
+ *  - turns on the Workflow tool and records a default reviewer,
  *  - checks the OpenSpec CLI.
  *
- * Dependency-free (Node built-ins only). Non-destructive: backs settings.json up
- * first and merges rather than overwrites. Re-runnable (idempotent).
+ * If the `claude` CLI isn't on PATH it falls back to writing settings.json directly
+ * (Claude Code then installs the plugins on next start). Dependency-free, re-runnable,
+ * non-destructive (backs settings.json up first).
  *
- * Usage:  node bin/install.mjs            (interactive)
- *         node bin/install.mjs --yes      (accept every recommended default)
- *         node bin/install.mjs --dry-run  (show what would change, write nothing)
+ * Usage:  node bin/install.mjs           (interactive)
+ *         node bin/install.mjs --yes     (accept every recommended default)
+ *         node bin/install.mjs --dry-run (show the steps, run/write nothing)
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -28,142 +30,124 @@ const ARGS = new Set(process.argv.slice(2))
 const AUTO = ARGS.has('--yes') || ARGS.has('-y')
 const DRY = ARGS.has('--dry-run')
 
-// The dependency plugins this kit wires up. Third-party ones are REFERENCED by their
-// public marketplace repo (never vendored). chrome-devtools-mcp ships in the built-in
-// `claude-plugins-official` marketplace, so it needs no extra marketplace entry.
-const KNOWN = {
-  engram: { marketplace: 'engram', repo: 'Gentleman-Programming/engram', plugin: 'engram@engram', required: false,
-    why: 'persistent cross-session memory (mem_save/mem_search); the harness can save project decisions to it' },
-  caveman: { marketplace: 'caveman', repo: 'JuliusBrussee/caveman', plugin: 'caveman@caveman', required: true,
-    why: 'REQUIRED by the harness — provides the caveman:cavecrew-investigator/reviewer compressed subagents' },
-  'chrome-devtools-mcp': { marketplace: null, plugin: 'chrome-devtools-mcp@claude-plugins-official', required: false,
-    why: 'browser automation MCP (navigate, click, screenshot, network) for eval/verification flows' },
+// Third-party plugins are REFERENCED by their public marketplace repo (never vendored).
+// chrome-devtools-mcp ships in the built-in `claude-plugins-official` marketplace.
+const DEPS = {
+  caveman: { repo: 'JuliusBrussee/caveman', marketplace: 'caveman', plugin: 'caveman@caveman' },
+  engram: { repo: 'Gentleman-Programming/engram', marketplace: 'engram', plugin: 'engram@engram' },
+  'chrome-devtools-mcp': { repo: null, marketplace: null, plugin: 'chrome-devtools-mcp@claude-plugins-official' },
 }
 
 function log(m) { process.stdout.write(m + '\n') }
-function detectConfigDir() {
-  if (process.env.CLAUDE_CONFIG_DIR) return process.env.CLAUDE_CONFIG_DIR
-  return path.join(os.homedir(), '.claude')
-}
-function readJson(p, fallback) {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fallback }
+function detectConfigDir() { return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') }
+function readJson(p, fb) { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return fb } }
+function hasCli(bin) { try { execSync(process.platform === 'win32' ? `where ${bin}` : `command -v ${bin}`, { stdio: 'ignore' }); return true } catch { return false } }
+function run(cmd, { optional = false } = {}) {
+  log(`     $ ${cmd}`)
+  if (DRY) return true
+  try { execSync(cmd, { stdio: 'inherit' }); return true }
+  catch (e) { log(`     ! failed${optional ? ' (continuing)' : ''}: ${e.message.split('\n')[0]}`); if (!optional) throw e; return false }
 }
 function deriveKitRepo() {
-  try {
-    const url = execSync('git -C "' + REPO_ROOT + '" remote get-url origin', { encoding: 'utf8' }).trim()
-    const m = url.match(/github\.com[:/]([^/]+\/[^/.]+)/)
-    return m ? m[1] : null
-  } catch { return null }
+  try { const u = execSync(`git -C "${REPO_ROOT}" remote get-url origin`, { encoding: 'utf8' }).trim(); const m = u.match(/github\.com[:/]([^/]+\/[^/.]+)/); return m ? m[1] : null } catch { return null }
 }
-
-async function ask(rl, question, def = true) {
+async function ask(rl, q, def = true) {
   if (AUTO) return def
-  const hint = def ? 'Y/n' : 'y/N'
-  const a = (await new Promise((res) => rl.question(`  ${question} [${hint}] `, res))).trim().toLowerCase()
-  if (a === '') return def
-  return a === 'y' || a === 'yes' || a === 's' || a === 'si'
+  const a = (await new Promise((r) => rl.question(`  ${q} [${def ? 'Y/n' : 'y/N'}] `, r))).trim().toLowerCase()
+  return a === '' ? def : ['y', 'yes', 's', 'si'].includes(a)
 }
-
 async function askReviewer(rl) {
   if (AUTO) return 'greptile'
-  const a = (await new Promise((res) => rl.question('  default reviewer — [g]reptile / [c]avecrew / [b]oth? [g] ', res))).trim().toLowerCase()
-  if (a.startsWith('c')) return 'cavecrew'
-  if (a.startsWith('b')) return 'greptile+cavecrew'
-  return 'greptile'
+  const a = (await new Promise((r) => rl.question('  default reviewer — [g]reptile / [c]avecrew / [b]oth? [g] ', r))).trim().toLowerCase()
+  return a.startsWith('c') ? 'cavecrew' : a.startsWith('b') ? 'greptile+cavecrew' : 'greptile'
 }
 
 async function main() {
   const configDir = detectConfigDir()
   const settingsPath = path.join(configDir, 'settings.json')
   const workflowsDir = path.join(configDir, 'workflows')
-  const kitRepo = deriveKitRepo() // owner/name of THIS repo, or null
+  const kitRepo = deriveKitRepo()
+  const CLI = hasCli('claude')
 
   log('')
   log('  agentic-sdd-kit — installer')
   log('  ' + '-'.repeat(52))
   log(`  Claude config dir : ${configDir}`)
-  log(`  This kit repo     : ${kitRepo || '(no git remote — kit plugin will be skipped)'}`)
-  log(`  Mode              : ${DRY ? 'DRY-RUN (writes nothing)' : AUTO ? 'auto (recommended defaults)' : 'interactive'}`)
+  log(`  This kit repo     : ${kitRepo || '(no git remote)'}`)
+  log(`  claude CLI        : ${CLI ? 'found — will install per step' : 'not found — will write settings.json instead'}`)
+  log(`  Mode              : ${DRY ? 'DRY-RUN' : AUTO ? 'auto (defaults)' : 'interactive'}`)
   log('')
 
   const rl = AUTO ? null : readline.createInterface({ input: process.stdin, output: process.stdout })
-  const choose = (q, d) => ask(rl, q, d)
-
   log('  Choose what to wire up:')
   const want = {
-    caveman: true, // required — enabled unconditionally, but told to the user
-    engram: await choose('engram   — persistent memory + save project decisions?', true),
-    'chrome-devtools-mcp': await choose('chrome-devtools-mcp — browser automation?', true),
-    kit: kitRepo ? await choose('sdd-harness plugin (this kit: agents/commands/skills/hooks)?', true) : false,
-    workflow: await choose('install the sdd-feature-flow workflow into ~/.claude/workflows/?', true),
+    engram: await ask(rl, 'engram   — persistent memory + save project decisions?', true),
+    'chrome-devtools-mcp': await ask(rl, 'chrome-devtools-mcp — browser automation / frontend validation?', true),
+    kit: kitRepo ? await ask(rl, 'sdd-harness plugin (this kit: agents/commands/skills/hooks)?', true) : false,
+    workflow: await ask(rl, 'install the sdd-feature-flow workflow into ~/.claude/workflows/?', true),
   }
   const defaultReviewer = await askReviewer(rl)
   if (rl) rl.close()
   log('')
-  log('  caveman is enabled automatically (the harness depends on it).')
+  log('  caveman is installed automatically (the harness depends on it).')
   log('')
 
-  // ---- build the settings.json patch ----
-  const settings = readJson(settingsPath, {})
-  const extraMk = { ...(settings.extraKnownMarketplaces || {}) }
-  const enabled = { ...(settings.enabledPlugins || {}) }
-  const addMarketplace = (name, repo) => { if (name && repo && !extraMk[name]) extraMk[name] = { source: { source: 'github', repo } } }
-  const enablePlugin = (id) => { enabled[id] = true }
+  const chosen = ['caveman', ...(want.engram ? ['engram'] : []), ...(want['chrome-devtools-mcp'] ? ['chrome-devtools-mcp'] : [])]
 
-  // caveman (required) + chosen third-party
-  addMarketplace(KNOWN.caveman.marketplace, KNOWN.caveman.repo); enablePlugin(KNOWN.caveman.plugin)
-  if (want.engram) { addMarketplace(KNOWN.engram.marketplace, KNOWN.engram.repo); enablePlugin(KNOWN.engram.plugin) }
-  if (want['chrome-devtools-mcp']) enablePlugin(KNOWN['chrome-devtools-mcp'].plugin)
-  if (want.kit && kitRepo) { addMarketplace('agentic-sdd-kit', kitRepo); enablePlugin('sdd-harness@agentic-sdd-kit') }
-
-  const patched = { ...settings, extraKnownMarketplaces: extraMk, enabledPlugins: enabled, enableWorkflows: true }
-
-  // ---- workflow install ----
-  const wfSrc = path.join(REPO_ROOT, 'plugins', 'sdd-harness', 'workflows', 'sdd-feature-flow.mjs')
-  const wfDst = path.join(workflowsDir, 'sdd-feature-flow.mjs')
-
-  // ---- report + apply ----
-  log('  Planned changes:')
-  log(`   • settings.json: enableWorkflows=true; marketplaces += [${Object.keys(extraMk).join(', ') || 'none'}]`)
-  log(`   • enabled plugins += [${Object.keys(enabled).filter((k) => !(settings.enabledPlugins || {})[k]).join(', ') || 'none new'}]`)
-  if (want.workflow) log(`   • copy workflow -> ${wfDst}`)
-  log(`   • default reviewer: ${defaultReviewer} -> ${path.join(configDir, 'agentic-sdd-kit.json')}`)
-  log('')
-
-  if (DRY) { log('  DRY-RUN: nothing written.'); return }
-
-  // backup + write settings
-  if (fs.existsSync(settingsPath)) {
-    const bak = settingsPath + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-')
-    fs.copyFileSync(settingsPath, bak)
-    log(`  backed up settings.json -> ${path.basename(bak)}`)
+  if (CLI) {
+    // --- active per-step install via the claude plugin CLI ---
+    log('  Installing plugins (per step):')
+    for (const key of chosen) {
+      const d = DEPS[key]
+      log(`   • ${key}`)
+      if (d.repo) run(`claude plugin marketplace add ${d.repo}`, { optional: true })
+      run(`claude plugin install ${d.plugin} --scope user`, { optional: true })
+    }
+    if (want.kit && kitRepo) {
+      log('   • sdd-harness (this kit)')
+      run(`claude plugin marketplace add ${kitRepo}`, { optional: true })
+      run(`claude plugin install sdd-harness@agentic-sdd-kit --scope user`, { optional: true })
+    }
   } else {
-    fs.mkdirSync(configDir, { recursive: true })
+    // --- fallback: write settings.json (Claude Code installs on next start) ---
+    log('  Writing settings.json (plugins install on next Claude Code start):')
+    const settings = readJson(settingsPath, {})
+    const extraMk = { ...(settings.extraKnownMarketplaces || {}) }
+    const enabled = { ...(settings.enabledPlugins || {}) }
+    for (const key of chosen) { const d = DEPS[key]; if (d.repo && !extraMk[d.marketplace]) extraMk[d.marketplace] = { source: { source: 'github', repo: d.repo } }; enabled[d.plugin] = true }
+    if (want.kit && kitRepo) { extraMk['agentic-sdd-kit'] = { source: { source: 'github', repo: kitRepo } }; enabled['sdd-harness@agentic-sdd-kit'] = true }
+    if (!DRY) writeSettings(settingsPath, configDir, { ...settings, extraKnownMarketplaces: extraMk, enabledPlugins: enabled })
+    log(`     marketplaces: ${Object.keys(extraMk).join(', ')}`)
   }
-  fs.writeFileSync(settingsPath, JSON.stringify(patched, null, 2) + '\n')
-  log('  settings.json updated.')
 
-  // kit config the launch flow reads for its preferred reviewer default
+  // --- enableWorkflows (the Workflow tool needs it either way) + reviewer default ---
+  const settings2 = readJson(settingsPath, {})
+  if (!settings2.enableWorkflows) { log('  Enabling the Workflow tool (settings.enableWorkflows = true).'); if (!DRY) writeSettings(settingsPath, configDir, { ...settings2, enableWorkflows: true }) }
   const kitCfgPath = path.join(configDir, 'agentic-sdd-kit.json')
-  fs.writeFileSync(kitCfgPath, JSON.stringify({ ...readJson(kitCfgPath, {}), defaultReviewer }, null, 2) + '\n')
-  log(`  default reviewer set to '${defaultReviewer}'.`)
+  log(`  Recording default reviewer: ${defaultReviewer}`)
+  if (!DRY) fs.writeFileSync(kitCfgPath, JSON.stringify({ ...readJson(kitCfgPath, {}), defaultReviewer }, null, 2) + '\n')
 
+  // --- workflow install ---
   if (want.workflow) {
-    if (!fs.existsSync(wfSrc)) { log(`  WARN: workflow source not found at ${wfSrc}`) }
-    else { fs.mkdirSync(workflowsDir, { recursive: true }); fs.copyFileSync(wfSrc, wfDst); log('  workflow installed.') }
+    const src = path.join(REPO_ROOT, 'plugins', 'sdd-harness', 'workflows', 'sdd-feature-flow.mjs')
+    const dst = path.join(workflowsDir, 'sdd-feature-flow.mjs')
+    log(`  Installing workflow -> ${dst}`)
+    if (!DRY) { if (fs.existsSync(src)) { fs.mkdirSync(workflowsDir, { recursive: true }); fs.copyFileSync(src, dst) } else log(`     ! source not found: ${src}`) }
   }
 
-  // openspec CLI check (non-fatal)
-  try { execSync('openspec --version', { stdio: 'ignore' }); log('  OpenSpec CLI: found.') }
-  catch { log('  OpenSpec CLI: NOT found — install with `npm i -g openspec` (or your package manager).') }
+  // --- openspec CLI check (advisory) ---
+  log(`  OpenSpec CLI: ${hasCli('openspec') ? 'found.' : 'NOT found — install with `npm i -g openspec`.'}`)
 
   log('')
-  log('  Done. Next steps:')
-  log('   1. Restart Claude Code so it picks up the new plugins + settings.')
-  log('   2. In a git repo with an openspec/ dir, run `/sdd-clarify` then launch the harness')
-  log('      via the Workflow tool (scriptPath ~/.claude/workflows/sdd-feature-flow.mjs).')
-  log('   3. Private plugin repos install with your own git credentials on first use.')
+  log(DRY ? '  DRY-RUN complete — nothing was changed.' : '  Done.')
+  log('  Next: restart Claude Code, then in a repo with openspec/ run /sdd-clarify and launch the harness.')
   log('')
+}
+
+function writeSettings(settingsPath, configDir, obj) {
+  if (fs.existsSync(settingsPath)) fs.copyFileSync(settingsPath, settingsPath + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-'))
+  else fs.mkdirSync(configDir, { recursive: true })
+  fs.writeFileSync(settingsPath, JSON.stringify(obj, null, 2) + '\n')
 }
 
 main().catch((e) => { console.error('install failed:', e); process.exit(1) })

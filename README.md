@@ -25,6 +25,7 @@ plugins/sdd-harness/                  # the plugin
   │   ├── sdd-clarify/                # front-door: ask load-bearing questions BEFORE the run
   │   ├── sdd-constitution/           # author/update openspec/project.md (the constitution)
   │   ├── sdd-checklist/              # requirements-quality checklist for a change
+  │   ├── sdd-verify/                 # surface-aware verify: chrome-devtools (frontend) / Playwright (API)
   │   └── pre-pr-greptile/            # run greptile + triage before a manual gh pr create
   ├── hooks/                          # SDD gate (block code before an approved spec), nudge, test gate
   └── workflows/sdd-feature-flow.mjs  # the dynamic workflow (installed into ~/.claude/workflows/)
@@ -44,24 +45,29 @@ bin/install.mjs                       # interactive CLI installer
 
 ## Install
 
-Clone this repo (private), then run the interactive installer:
+**Just the harness plugin** — one command (uses the built-in `claude` CLI):
 
 ```bash
-git clone git@github.com:alejandro-cedeno-10/agentic-sdd-kit.git
+claude plugin marketplace add alejandro-cedeno-10/agentic-sdd-kit
+claude plugin install sdd-harness@agentic-sdd-kit
+```
+
+**Full setup** — also installs the dependency plugins (caveman *required*, engram,
+chrome-devtools-mcp) **per step**, copies the workflow into `~/.claude/workflows/`, and records
+a default reviewer. Clone and run the interactive installer:
+
+```bash
+git clone https://github.com/alejandro-cedeno-10/agentic-sdd-kit.git
 cd agentic-sdd-kit
 node bin/install.mjs
 ```
 
-The installer asks which pieces to wire up, then (non-destructively, with a backup):
-
-- registers the marketplaces + enables the plugins you chose (caveman is enabled
-  automatically because the harness depends on it),
-- copies `sdd-feature-flow.mjs` into `~/.claude/workflows/`,
-- sets `enableWorkflows: true`,
-- checks for the OpenSpec CLI.
-
-Flags: `--yes` (accept recommended defaults), `--dry-run` (show the diff, write nothing).
-Re-runnable and idempotent. Restart Claude Code afterwards.
+The installer detects the `claude` CLI and installs each dependency step by step
+(`claude plugin marketplace add` + `claude plugin install --scope user`); if the CLI isn't
+found it falls back to writing `settings.json` (Claude Code then installs on next start —
+non-destructive, backed up first). It also sets `enableWorkflows: true` and checks the OpenSpec
+CLI. Flags: `--yes` (defaults), `--dry-run` (show the steps, change nothing). Re-runnable.
+Restart Claude Code afterwards.
 
 ## Usage
 
