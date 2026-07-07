@@ -1,0 +1,17 @@
+{
+  "name": "agentic-sdd-kit",
+  "owner": {
+    "name": "alejandro-cedeno-10"
+  },
+  "metadata": {
+    "description": "Project- and stack-agnostic Spec-Driven Development kit for Claude Code: an OpenSpec feature-lifecycle dynamic workflow (route -> clarify -> validated spec -> human approval gate -> implement -> validate -> forced-greptile review -> signed PR), the sdd-openspec enforcer agent, SDD gate hooks, and a CLI installer that wires up engram (persistent memory), caveman (compressed subagents), and chrome-devtools-mcp (browser automation).",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "sdd-harness",
+      "source": "./plugins/sdd-harness",
+      "description": "The agnostic SDD/OpenSpec harness: sdd-feature-flow dynamic workflow + sdd-clarify front-door + sdd-openspec agent + pre-pr-greptile skill + SDD gate hooks. Requires the caveman plugin; pairs with engram."
+    }
+  ]
+}

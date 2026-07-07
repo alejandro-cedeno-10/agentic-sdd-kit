@@ -1,0 +1,36 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_gate.py\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_nudge.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/test_gate.py\"",
+            "timeout": 960
+          }
+        ]
+      }
+    ]
+  }
+}

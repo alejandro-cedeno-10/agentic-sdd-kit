@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "sdd-harness",
+  "version": "0.1.0",
+  "description": "Project- and stack-agnostic Spec-Driven Development harness for Claude Code. Ships the sdd-feature-flow dynamic workflow (route -> clarify -> validated OpenSpec change -> human approval gate -> implement one-at-a-time -> validate -> forced-greptile review -> signed PR to trunk), the sdd-openspec enforcer agent, the sdd-clarify front-door and pre-pr-greptile skills, and SDD gate hooks (block code before an approved spec, nudge, test gate). Auto-detects Python vs JS/TS tooling; delegates e2e eval to a per-project script. Requires the caveman plugin (compressed investigator/reviewer subagents); pairs with engram (persistent memory).",
+  "author": {
+    "name": "alejandro-cedeno-10"
+  },
+  "keywords": [
+    "spec-driven-development",
+    "openspec",
+    "sdd",
+    "workflow",
+    "harness",
+    "agentic",
+    "greptile",
+    "code-review"
+  ]
+}
