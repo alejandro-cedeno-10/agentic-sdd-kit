@@ -1,6 +1,6 @@
 export const meta = {
   name: 'sdd-feature-flow',
-  description: 'Opt-in dynamic-workflow conductor for the OpenSpec feature lifecycle: intake+REFUSE-first route -> understand -> validated change -> implement -> validate (local unit tests + a project-local e2e-eval hook) -> greptile+triage review (diff-match verified) -> signed PR to trunk. GLOBAL + project-agnostic; reuses the on-disk substrate (openspec CLI, live SDD hooks, greptile CLI, cavecrew reviewers) and delegates any e2e eval to the project via scripts-dev/e2e_eval.sh. Model-tiered (Haiku for mechanical steps, Sonnet for code/spec authoring, never Opus). Never auto-fired; the Workflow tool first-run confirmation is the spend gate.',
+  description: 'Opt-in dynamic-workflow conductor for the OpenSpec feature lifecycle: intake+REFUSE-first route -> understand -> validated change -> implement -> validate (local unit tests + openspec --strict) -> greptile+triage review (diff-match verified) -> signed PR to trunk. GLOBAL + project-agnostic; reuses the on-disk substrate (openspec CLI, live SDD hooks, greptile CLI, cavecrew reviewers). Model-tiered (Haiku for mechanical steps, Sonnet for code/spec authoring, never Opus). Never auto-fired; the Workflow tool first-run confirmation is the spend gate.',
   phases: [
     { title: 'Intake', model: 'haiku' },
     { title: 'Understand', model: 'sonnet' },
@@ -19,7 +19,7 @@ export const meta = {
 const A = typeof args === 'string' ? { goal: args } : args && typeof args === 'object' ? args : {}
 const GOAL = (A.goal || '').toString()
 const PR_TARGET = (A.prTarget || A.base || 'develop').toString() // where the feature PR opens (org flow: feature -> develop)
-const DIFF_BASE = (A.diffBase || 'develop').toString() // fork parent for review/eval diffs; reviewers compute git merge-base ${DIFF_BASE} HEAD, NOT the PR target (avoids inflating the diff with commits the trunk has but the fork point does not)
+const DIFF_BASE = (A.diffBase || 'develop').toString() // fork parent for the review diff; reviewers compute git merge-base ${DIFF_BASE} HEAD, NOT the PR target (avoids inflating the diff with commits the trunk has but the fork point does not)
 const REVIEWER = (A.reviewer || 'greptile').toString() // 'greptile' | 'cavecrew' | 'greptile+cavecrew'
 const AUTO_PR = A.autoPr === true // default false: stop before the outward gh action
 const GH_USER = (A.ghUser || '').toString() // optional gh account for Ship; empty -> use whatever gh account is already authenticated (portable, no hardcoded user)
@@ -35,13 +35,12 @@ const MAX_REVIEW_LOOPBACKS = 1
 const CHEAP = { model: 'haiku', effort: 'low' }
 const CODE = { model: 'sonnet', effort: 'high' }
 // Spec-gate authoring/validation/recheck is the highest-leverage, lowest-call-count phase
-// (~2-5 agent calls per run): a wrong architectural call here (e.g. static-vs-dynamic catalog
-// choice) cascades into wasted implementation. Still Sonnet (never Opus, per the user's standing
-// rule) but at MAX effort: the CRI incident's root cause was the gate design (assumptions parked
-// as footnotes instead of triggering a bail), not model capability — Sonnet already produced a
-// well-reasoned design.md once the gate forced the right questions. Max effort buys more
-// reasoning depth on the same model, without the Opus cost multiplier, for the phase where a
-// wrong call is most expensive to unwind.
+// (~2-5 agent calls per run): a wrong architectural call here cascades into wasted
+// implementation. Still Sonnet (never Opus, per the user's standing rule) but at MAX effort —
+// the usual root cause of a wrong spec is the GATE design (assumptions parked as footnotes
+// instead of triggering a bail), not model capability, so max effort buys more reasoning depth
+// on the same model, without the Opus cost multiplier, for the phase where a wrong call is
+// most expensive to unwind.
 const PLAN = { model: 'sonnet', effort: 'max' }
 
 // ------------------------------------------------------------------ schemas
@@ -108,21 +107,6 @@ const IMPL_SCHEMA = {
     tasks_total: { type: 'number' },
     all_green: { type: 'boolean' },
     blocked_reason: { type: ['string', 'null'] },
-  },
-}
-// End-to-end eval is DELEGATED to a project-local script (`scripts-dev/e2e_eval.sh`):
-// this global workflow is project-agnostic, so it never hardcodes one repo's eval. The
-// project script owns ALL project-specific logic (whether to arm from the diff, how to
-// run, the fail-open discriminator) and speaks ONLY through its exit code.
-const E2E_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['status', 'exit_code', 'detail', 'tail'],
-  properties: {
-    status: { type: 'string', enum: ['skipped', 'pass', 'hard_block', 'not_evaluated'] },
-    exit_code: { type: 'number' },
-    detail: { type: 'string' },
-    tail: { type: 'string' },
   },
 }
 // Greptile run + MANDATORY diff-match verification (the stale/cross-repo cache-hit
@@ -346,28 +330,17 @@ const specOk = await agent(
   { label: 'spec-validate', phase: 'Validate', schema: FLOOR_SCHEMA, agentType: 'general-purpose', ...CHEAP }
 )
 
-let evalVerdict = { status: 'skipped', detail: 'no project e2e-eval; local unit-test floor is the whole gate' }
-const ev = await agent(
-  `Project-local END-TO-END eval hook (project-agnostic — no assumptions about what the eval is). Check whether an executable \`scripts-dev/e2e_eval.sh\` exists in the repo root. If it does NOT exist, report status "skipped" and do nothing — the local unit-test floor is the whole gate for this project. If it DOES exist, run \`bash scripts-dev/e2e_eval.sh ${DIFF_BASE}\` using THIS shell's own environment/credentials (do NOT assume-role, do NOT add flags, do NOT widen IAM). Capture the exit code and the last ~30 lines. The script owns ALL logic and speaks only via its exit code: 0 -> status "pass", 1 -> status "hard_block", any other code (2, 124, …) -> status "not_evaluated" (the script's own fail-open path, e.g. runtime unreachable). Report status, exit_code, a one-line detail, and the tail.`,
-  { label: 'e2e-eval', phase: 'Validate', schema: E2E_SCHEMA, agentType: 'general-purpose', ...CHEAP }
-)
-if (ev && ev.status) {
-  evalVerdict = { status: ev.status, detail: ev.detail || '', exit_code: ev.exit_code, tail: ev.tail }
-  if (ev.status !== 'skipped') log(`E2E eval gate: ${ev.status} — ${ev.detail}`)
-}
-
 const floorRed = !floor || !floor.passed // null result (agent failed) -> red, fail closed
 const specRed = !specOk || !specOk.passed // null result (agent failed) -> red, fail closed
-if (floorRed || specRed || evalVerdict.status === 'hard_block') {
+if (floorRed || specRed) {
   return {
     bailed: true,
     phase: 'Validate',
-    reason: floorRed ? 'tests/ruff red' : specRed ? 'openspec --strict failed' : 'chat eval hard-block',
+    reason: floorRed ? 'tests red' : 'openspec --strict failed',
     changeId,
     floor,
     specOk,
-    evalVerdict,
-    note: 'Fix and re-launch; the eval gate is capped at ONE run per invocation and is NOT re-run on loop-back.',
+    note: 'Fix and re-launch.',
   }
 }
 
@@ -376,7 +349,7 @@ phase('Review')
 let reviewRound = 0
 let review = await runReview()
 if (review.failed) {
-  return { bailed: true, phase: 'Review', reason: `greptile (forced default reviewer) could not produce a verified review: ${review.note || 'unavailable/unauth/stale'}. NOT degrading to cavecrew. Fix greptile auth/availability, or re-launch with reviewer='cavecrew' or 'greptile+cavecrew'.`, changeId, review, evalVerdict }
+  return { bailed: true, phase: 'Review', reason: `greptile (forced default reviewer) could not produce a verified review: ${review.note || 'unavailable/unauth/stale'}. NOT degrading to cavecrew. Fix greptile auth/availability, or re-launch with reviewer='cavecrew' or 'greptile+cavecrew'.`, changeId, review }
 }
 
 async function runGreptileVerified() {
@@ -433,7 +406,7 @@ while (review.confirmed > 0 && reviewRound < MAX_REVIEW_LOOPBACKS) {
   review = await runReview()
 }
 if (review.confirmed > 0) {
-  return { bailed: true, phase: 'Review', reason: `${review.confirmed} confirmed blocking finding(s) remain after ${MAX_REVIEW_LOOPBACKS} fix round(s)`, changeId, review, evalVerdict }
+  return { bailed: true, phase: 'Review', reason: `${review.confirmed} confirmed blocking finding(s) remain after ${MAX_REVIEW_LOOPBACKS} fix round(s)`, changeId, review }
 }
 // A review-fix round mutated code — re-run the deterministic floor before Ship so a fix that broke
 // tests can never reach the trunk (the fix agent's own self-report of green is not trusted here).
@@ -449,7 +422,6 @@ phase('Ship')
 const evidence = [
   `OpenSpec change: ${changeId}`,
   `Floor: ${floor && floor.passed ? 'green' : 'see logs'} | openspec --strict: ${specOk && specOk.passed ? 'pass' : 'see logs'}`,
-  `Chat eval: ${evalVerdict.status}${evalVerdict.detail ? ' — ' + evalVerdict.detail : ''}`,
   `Review (${review.source}): clean after ${reviewRound} fix round(s)`,
 ].join('\n')
 
@@ -459,6 +431,6 @@ const ship = await agent(
 )
 
 if (!ship || !ship.committed) {
-  return { bailed: true, phase: 'Ship', reason: ship ? `ship did not complete a signed commit: ${ship.detail || ship.guards || 'committed=false'}` : 'ship agent returned no result — failing closed', changeId, ship, review, evalVerdict }
+  return { bailed: true, phase: 'Ship', reason: ship ? `ship did not complete a signed commit: ${ship.detail || ship.guards || 'committed=false'}` : 'ship agent returned no result — failing closed', changeId, ship, review }
 }
-return { bailed: false, changeId, brief, impl, floor, specOk, evalVerdict, review, ship, autoPr: AUTO_PR, prTarget: PR_TARGET, diffBase: DIFF_BASE, reviewer: REVIEWER }
+return { bailed: false, changeId, brief, impl, floor, specOk, review, ship, autoPr: AUTO_PR, prTarget: PR_TARGET, diffBase: DIFF_BASE, reviewer: REVIEWER }

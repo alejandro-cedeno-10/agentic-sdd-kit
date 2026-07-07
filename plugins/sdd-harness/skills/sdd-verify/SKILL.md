@@ -55,15 +55,12 @@ Requires Playwright (the kit installer confirms it; else `pnpm add -D @playwrigh
 4. Report status codes + shape assertions per endpoint; keep or delete the script per the repo's
    convention.
 
-## Wiring into the harness
+## When in the flow
 
-The `sdd-feature-flow` Validate phase delegates end-to-end eval to a project-local
-`scripts-dev/e2e_eval.sh` (exit 0 = pass, 1 = hard block, other = not-evaluated). To make this
-verification part of the automated gate, have that script call the surface it applies to (drive
-chrome-devtools headless for frontend, or `npx playwright test` for the API) and return the
-right exit code. Kept project-local so the global harness stays stack-agnostic. A ready-to-copy
-template lives in the kit at `examples/e2e_eval.example.sh` — copy it to your repo's
-`scripts-dev/e2e_eval.sh`, `chmod +x`, and fill in the checks.
+The harness's Validate phase runs the deterministic floor (unit tests + `openspec --strict`); it
+does NOT auto-drive a browser or an API. Invoke THIS skill yourself — or have the agent invoke it —
+after implementing a change, or before approving a PR, to confirm the running surface actually
+works. It stays a skill (not an automated gate) so the harness remains stack-agnostic.
 
 ## Rules
 

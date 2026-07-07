@@ -96,7 +96,7 @@ Restart Claude Code afterwards.
 | **Analyze** | Spec-Kit's `/analyze` gate: read-only cross-artifact consistency + coverage check (every requirement has a task, no orphans, no contradictions, honors the constitution). Bails on material gaps before any code. |
 | **Persist** | Best-effort: saves the design's decisions to engram (skipped if engram absent). |
 | **Implement** | One task at a time, floor (tests+lint) after each. Bails `partial` if automatable tasks remain. |
-| **Validate** | Floor + `openspec --strict` + optional project e2e-eval (`scripts-dev/e2e_eval.sh`). |
+| **Validate** | Floor (unit tests + lint) + `openspec --strict`. Surface validation (frontend/API) is the on-demand `sdd-verify` skill, not an auto-gate. |
 | **Review** | greptile (forced default) — bails loudly rather than silently degrading to cavecrew. One bounded fix round. |
 | **Ship** | Hard-guards (feature branch, GPG signing), signed commit, push/PR only if `autoPr`. |
 

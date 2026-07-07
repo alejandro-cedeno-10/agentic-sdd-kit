@@ -38,7 +38,7 @@ the recommended option; otherwise default to greptile. Pass the choice as `args.
 bails with questions on load-bearing unknowns; then a HUMAN APPROVAL gate returns the
 full proposal/design/tasks and stops until you approve) → Implement (one task at a time,
 floor after each; bails `partial` if not all automatable tasks are done) → Validate
-(floor + `openspec --strict` + optional project e2e) → Review (greptile is the forced
+(floor + `openspec --strict`) → Review (greptile is the forced
 default reviewer — bails loudly rather than silently degrading to cavecrew) → Ship
 (signed commit; push/PR only if `autoPr`).
 
