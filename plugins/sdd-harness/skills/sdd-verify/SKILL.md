@@ -61,7 +61,9 @@ The `sdd-feature-flow` Validate phase delegates end-to-end eval to a project-loc
 `scripts-dev/e2e_eval.sh` (exit 0 = pass, 1 = hard block, other = not-evaluated). To make this
 verification part of the automated gate, have that script call the surface it applies to (drive
 chrome-devtools headless for frontend, or `npx playwright test` for the API) and return the
-right exit code. Kept project-local so the global harness stays stack-agnostic.
+right exit code. Kept project-local so the global harness stays stack-agnostic. A ready-to-copy
+template lives in the kit at `examples/e2e_eval.example.sh` — copy it to your repo's
+`scripts-dev/e2e_eval.sh`, `chmod +x`, and fill in the checks.
 
 ## Rules
 

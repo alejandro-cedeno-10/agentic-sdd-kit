@@ -57,7 +57,6 @@ default reviewer â€” bails loudly rather than silently degrading to cavecrew) â†
   default false leaves the SIGNED commit local and returns the ready `gh pr create` command.
 - `ghUser` (string, default empty): gh account to switch to for Ship; empty uses whatever
   account is already authenticated (no hardcoded user).
-- `region` (string, default us-east-1): region for the optional project e2e-eval hook.
 
 The workflow ends at a SIGNED PR to the trunk (never main, never a Claude/Anthropic
 co-author trailer, never `--no-verify`). It is never auto-fired by a hook.

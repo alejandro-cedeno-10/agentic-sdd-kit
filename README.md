@@ -104,7 +104,7 @@ Restart Claude Code afterwards.
 
 `goal`, `specApproved`, `prTarget`/`base` (default `develop`), `diffBase` (default
 `develop`), `reviewer` (`greptile` | `cavecrew` | `greptile+cavecrew`), `autoPr`,
-`ghUser`, `saveDecisions`, `region`. See `commands/sdd-feature-flow.md`.
+`ghUser`, `saveDecisions`. See `commands/sdd-feature-flow.md`.
 
 ## Design notes
 

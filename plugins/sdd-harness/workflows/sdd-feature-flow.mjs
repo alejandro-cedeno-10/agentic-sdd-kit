@@ -20,7 +20,6 @@ const A = typeof args === 'string' ? { goal: args } : args && typeof args === 'o
 const GOAL = (A.goal || '').toString()
 const PR_TARGET = (A.prTarget || A.base || 'develop').toString() // where the feature PR opens (org flow: feature -> develop)
 const DIFF_BASE = (A.diffBase || 'develop').toString() // fork parent for review/eval diffs; reviewers compute git merge-base ${DIFF_BASE} HEAD, NOT the PR target (avoids inflating the diff with commits the trunk has but the fork point does not)
-const REGION = (A.region || 'us-east-1').toString()
 const REVIEWER = (A.reviewer || 'greptile').toString() // 'greptile' | 'cavecrew' | 'greptile+cavecrew'
 const AUTO_PR = A.autoPr === true // default false: stop before the outward gh action
 const GH_USER = (A.ghUser || '').toString() // optional gh account for Ship; empty -> use whatever gh account is already authenticated (portable, no hardcoded user)
@@ -45,20 +44,14 @@ const CODE = { model: 'sonnet', effort: 'high' }
 // wrong call is most expensive to unwind.
 const PLAN = { model: 'sonnet', effort: 'max' }
 
-// The eval-arming detector is CHANGE-ID / GOAL regex ONLY (user decision): bare module
-// tokens like "stream"/"router" over-match and would false-arm a 15-25 min
-// production-hitting gate.
-const CHAT_SURFACE_RE = /chat|ask.?brain|synthes|steering|navi|answer|citation|retrieval|rag/i
-
 // ------------------------------------------------------------------ schemas
 const ROUTE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['is_openspec', 'size', 'chat_surface', 'active_change_id', 'affected_modules', 'recommendation'],
+  required: ['is_openspec', 'size', 'active_change_id', 'affected_modules', 'recommendation'],
   properties: {
     is_openspec: { type: 'boolean' },
     size: { type: 'string', enum: ['small', 'large'] },
-    chat_surface: { type: 'boolean' },
     active_change_id: { type: ['string', 'null'] },
     affected_modules: { type: 'array', items: { type: 'string' } },
     recommendation: { type: 'string' },
@@ -190,7 +183,7 @@ const SHIP_SCHEMA = {
 // ------------------------------------------------------------------ Phase 0
 phase('Intake')
 const route = await agent(
-  `You are the intake/route classifier for an OpenSpec feature-dev workflow. Read-only, ONE cheap turn. In the current repo run \`git diff --stat\`, \`git status --short\`, and check for an \`openspec/\` dir and the newest active OpenSpec change (a changes/<id> whose tasks.md still has an unchecked "- [ ]").\n\nUSER GOAL: ${JSON.stringify(GOAL)}\n\nEmit a routing manifest:\n- is_openspec: does openspec/ exist here.\n- size: "small" for a single-file edit / bugfix / docs-or-spec-only change that one /opsx:propose->/opsx:apply cycle handles; "large" for a genuinely multi-task or cross-cutting change worth this workflow. Size by the GOAL's INHERENT blast radius, NOT by whether openspec artifacts already exist: an absent or bare scaffold (a changes/<id> with only .openspec.yaml and no tasks.md) does NOT make the change small — the workflow authors the proposal+tasks itself in the Spec-gate phase. A new capability, a new country/variant, or anything touching multiple files is "large" even when zero spec files exist yet.\n- chat_surface: true ONLY if the active change-id OR the user goal matches chat/ask_brain/synthesis/steering/navi/answer/citation/retrieval/rag. Do NOT set it from bare module names alone. This flag arms a 15-25 min production-hitting eval, so bias toward false.\n- active_change_id: the newest change whose tasks.md EXISTS and still has an unchecked "- [ ]", or null. A change dir with only .openspec.yaml (no tasks.md) is NOT active — return null so the Spec-gate phase authors it fresh.\n- affected_modules: top-level dirs/modules the goal or diff touches.\n- recommendation: if is_openspec is false OR size is small, a one-line "use /opsx:propose -> /opsx:apply directly" note; else "proceed with sdd-feature-flow".\n\nBias toward size="small" for genuinely trivial changes (bailing to /opsx cheaply is the win there) — but do NOT let an incomplete or missing spec scaffold pull a multi-file / cross-cutting / new-capability GOAL down to "small". Judge the feature, not the paperwork.`,
+  `You are the intake/route classifier for an OpenSpec feature-dev workflow. Read-only, ONE cheap turn. In the current repo run \`git diff --stat\`, \`git status --short\`, and check for an \`openspec/\` dir and the newest active OpenSpec change (a changes/<id> whose tasks.md still has an unchecked "- [ ]").\n\nUSER GOAL: ${JSON.stringify(GOAL)}\n\nEmit a routing manifest:\n- is_openspec: does openspec/ exist here.\n- size: "small" for a single-file edit / bugfix / docs-or-spec-only change that one /opsx:propose->/opsx:apply cycle handles; "large" for a genuinely multi-task or cross-cutting change worth this workflow. Size by the GOAL's INHERENT blast radius, NOT by whether openspec artifacts already exist: an absent or bare scaffold (a changes/<id> with only .openspec.yaml and no tasks.md) does NOT make the change small — the workflow authors the proposal+tasks itself in the Spec-gate phase. A new capability, a new country/variant, or anything touching multiple files is "large" even when zero spec files exist yet.\n- active_change_id: the newest change whose tasks.md EXISTS and still has an unchecked "- [ ]", or null. A change dir with only .openspec.yaml (no tasks.md) is NOT active — return null so the Spec-gate phase authors it fresh.\n- affected_modules: top-level dirs/modules the goal or diff touches.\n- recommendation: if is_openspec is false OR size is small, a one-line "use /opsx:propose -> /opsx:apply directly" note; else "proceed with sdd-feature-flow".\n\nBias toward size="small" for genuinely trivial changes (bailing to /opsx cheaply is the win there) — but do NOT let an incomplete or missing spec scaffold pull a multi-file / cross-cutting / new-capability GOAL down to "small". Judge the feature, not the paperwork.`,
   { label: 'route', phase: 'Intake', schema: ROUTE_SCHEMA, agentType: 'general-purpose', ...CHEAP }
 )
 
@@ -203,7 +196,7 @@ if (!route || !route.is_openspec || route.size === 'small') {
     route,
   }
 }
-log(`Route: large change, chat_surface=${route.chat_surface}, active_change=${route.active_change_id || 'none'}`)
+log(`Route: large change, active_change=${route.active_change_id || 'none'}`)
 
 // ------------------------------------------------------------------ Phase 1
 phase('Understand')
@@ -227,7 +220,7 @@ phase('Spec gate')
 let changeId = route.active_change_id
 if (!changeId) {
   const authored = await agent(
-    `You are the SDD author. There is no active OpenSpec change for this work.\n\nFIRST, a MANDATORY clarity gate (this workflow runs autonomously and CANNOT ask the user mid-run — the ONLY way the user ever gets asked is if you BAIL now with questions). Using the design brief below, enumerate every spec decision whose answer you do NOT know for certain and would fill with an ASSUMPTION about: an external contract or payload shape, an integration string/identifier another system emits, the data model, scope boundaries, template/column structure, or overloaded domain terminology. For EACH assumption ask yourself: could a stakeholder (product, another team, the API owner) plausibly contradict it, AND would being wrong change code, template, or contract STRUCTURE (not merely a cosmetic label or a safely reversible default)? If YES for even ONE, you MUST set needs_clarification=true, return those as up to 6 specific questions (embed in each question the concrete options you would otherwise choose between, marking your recommended default), and create NOTHING. Do NOT write the spec around a load-bearing assumption and park it in an "Open Questions"/"Supuestos" section — a load-bearing unknown is a BAIL, not a footnote. Proceed to author ONLY when every remaining unknown is genuinely cosmetic or safely reversible.\n\nOtherwise (goal is fully specifiable with no load-bearing assumptions): using \`openspec\` CLI conventions, create ONE change (proposal.md + delta spec + design.md + tasks.md) for the goal ${JSON.stringify(GOAL)}, grounded in this design brief:\n\n${brief.design_brief}\n\nRequirements MUST use SHALL/MUST in the first line of each requirement body (the strict parser needs it). Then run \`openspec validate <id> --strict\` and report the change id + whether it passed, with needs_clarification=false. Do NOT write any production code yet.${route.chat_surface ? ' Because this is a chat-surface change, ALSO append regression rows to scripts-dev/eval_chat_questions.jsonl (authoring the rows only — never run the battery).' : ''}`,
+    `You are the SDD author. There is no active OpenSpec change for this work.\n\nFIRST, a MANDATORY clarity gate (this workflow runs autonomously and CANNOT ask the user mid-run — the ONLY way the user ever gets asked is if you BAIL now with questions). Using the design brief below, enumerate every spec decision whose answer you do NOT know for certain and would fill with an ASSUMPTION about: an external contract or payload shape, an integration string/identifier another system emits, the data model, scope boundaries, template/column structure, or overloaded domain terminology. For EACH assumption ask yourself: could a stakeholder (product, another team, the API owner) plausibly contradict it, AND would being wrong change code, template, or contract STRUCTURE (not merely a cosmetic label or a safely reversible default)? If YES for even ONE, you MUST set needs_clarification=true, return those as up to 6 specific questions (embed in each question the concrete options you would otherwise choose between, marking your recommended default), and create NOTHING. Do NOT write the spec around a load-bearing assumption and park it in an "Open Questions"/"Supuestos" section — a load-bearing unknown is a BAIL, not a footnote. Proceed to author ONLY when every remaining unknown is genuinely cosmetic or safely reversible.\n\nOtherwise (goal is fully specifiable with no load-bearing assumptions): using \`openspec\` CLI conventions, create ONE change (proposal.md + delta spec + design.md + tasks.md) for the goal ${JSON.stringify(GOAL)}, grounded in this design brief:\n\n${brief.design_brief}\n\nRequirements MUST use SHALL/MUST in the first line of each requirement body (the strict parser needs it). Then run \`openspec validate <id> --strict\` and report the change id + whether it passed, with needs_clarification=false. Do NOT write any production code yet.`,
     { label: 'author-change', phase: 'Spec gate', schema: CHANGE_SCHEMA, agentType: 'sdd-openspec', ...PLAN }
   )
   if (authored && authored.needs_clarification) {
