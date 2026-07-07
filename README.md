@@ -35,8 +35,7 @@ bin/install.mjs                       # interactive CLI installer
 ## Requirements
 
 - **Claude Code** with the Workflow tool (`enableWorkflows: true` — the installer sets it).
-- **Node ≥ 18** (the workflow + installer are ESM).
-- **Python 3** (the SDD gate/nudge/test-gate hooks are Python).
+- **Node ≥ 18** — the workflow, installer, and SDD gate hooks are all Node (ESM). No Python needed.
 - **OpenSpec CLI** (`npm i -g openspec`) — the workflow authors/validates OpenSpec changes.
 - **greptile CLI**, authenticated — the default (forced) reviewer.
 - **caveman** plugin — **required**; the workflow uses `caveman:cavecrew-*` subagents.

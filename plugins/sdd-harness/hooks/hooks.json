@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_gate.py\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_gate.mjs\""
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_nudge.py\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sdd_nudge.mjs\""
           }
         ]
       }
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -B \"${CLAUDE_PLUGIN_ROOT}/hooks/test_gate.py\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/test_gate.mjs\"",
             "timeout": 960
           }
         ]
